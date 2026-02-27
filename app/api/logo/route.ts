@@ -1,62 +1,69 @@
-import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
-
-const genAI = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { brand_name, industry, tone, visual_style, colors, logo_style } = body;
 
-    const prompt = `Create a professional logo design for a brand called "${brand_name}" in the ${industry} industry.
+    const prompt = `Create a professional, minimalist logo design for "${brand_name}", a ${industry} brand.
 
-Style requirements:
-- Tone: ${tone}
-- Visual style: ${visual_style || "modern and minimalist"}
-- Logo style: ${logo_style || "wordmark with icon"}
-- Color preference: ${colors || "based on industry standards"}
+Style: ${visual_style || "modern and clean"}
+Logo type: ${logo_style || "wordmark with simple icon"}
+Tone: ${tone}
+Colors: ${colors || "professional colors suitable for the industry"}
 
-The logo should be:
-- Clean and professional
-- Suitable for both digital and print
-- Memorable and distinctive
-- On a clean white or transparent background
-- Vector-style, flat design aesthetic
+Requirements:
+- Simple, memorable design
+- Clean white background
+- Vector-style flat design
+- Professional and suitable for business use
+- No text except the brand name
+- Single logo concept`;
 
-Generate a single, high-quality logo concept.`;
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${process.env.GOOGLE_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: ["TEXT", "IMAGE"],
+          },
+        }),
+      }
+    );
 
-    const response = await genAI.models.generateContent({
-      model: "gemini-2.0-flash-exp-image-generation",
-      contents: prompt,
-      config: {
-        responseModalities: ["image", "text"],
-      },
-    });
+    const data = await response.json();
 
-    // Extract image from response
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const imagePart = parts.find((p: any) => p.inlineData?.data);
+    if (data.error) {
+      console.error("Gemini API error:", data.error);
+      return NextResponse.json({ success: false, error: data.error.message }, { status: 500 });
+    }
+
+    // Find image in response
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const imagePart = parts.find((p: { inlineData?: { mimeType: string; data: string } }) => p.inlineData);
 
     if (imagePart?.inlineData) {
-      const imageData = imagePart.inlineData.data as string;
-      const mimeType = (imagePart.inlineData.mimeType as string) || "image/png";
-      
+      const { mimeType, data: imageData } = imagePart.inlineData;
       return NextResponse.json({
         success: true,
         image: `data:${mimeType};base64,${imageData}`,
       });
     }
 
+    // If no image, return error with details
+    const textPart = parts.find((p: { text?: string }) => p.text);
     return NextResponse.json({
       success: false,
-      error: "No image generated",
+      error: "No se pudo generar imagen",
+      details: textPart?.text || "Modelo no soporta generación de imágenes",
     });
   } catch (error) {
-    console.error("Error generating logo:", error);
+    console.error("Logo generation error:", error);
     return NextResponse.json(
-      { success: false, error: "Error generating logo" },
+      { success: false, error: String(error) },
       { status: 500 }
     );
   }
